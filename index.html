@@ -1,0 +1,443 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Classic Pong</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #080b12;
+  color: #f5f7ff;
+  font-family: monospace;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.game {
+  width: min(900px, 100%);
+  text-align: center;
+}
+
+h1 {
+  letter-spacing: 12px;
+  font-size: clamp(30px, 6vw, 54px);
+  margin: 0 0 8px;
+  color: #67f5d1;
+  text-shadow: 0 0 20px #20b99a66;
+}
+
+.subtitle {
+  color: #8490a8;
+  margin-bottom: 22px;
+}
+
+.scoreboard {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  margin: 15px 0;
+}
+
+.score {
+  font-size: clamp(35px, 7vw, 60px);
+  color: #67f5d1;
+}
+
+.player-name {
+  font-size: 12px;
+  color: #9ba7bd;
+  margin-top: 5px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  border: 1px solid #28354a;
+  border-radius: 8px;
+  background: #0b111c;
+  box-shadow: 0 0 35px #0009;
+  touch-action: none;
+}
+
+.controls {
+  color: #a8b3c9;
+  line-height: 2;
+  font-size: 12px;
+  margin-top: 16px;
+}
+
+button {
+  background: #67f5d1;
+  color: #07120f;
+  border: 0;
+  border-radius: 6px;
+  padding: 12px 24px;
+  margin: 10px 5px;
+  font-family: inherit;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+button:hover { background: #a0ffe7; }
+
+.mobile-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 25px;
+  margin-top: 12px;
+}
+
+.mobile-controls button {
+  flex: 1;
+  margin: 0;
+  user-select: none;
+  touch-action: none;
+}
+
+@media (min-width: 700px) {
+  .mobile-controls { display: none; }
+}
+</style>
+</head>
+
+<body>
+<main class="game">
+  <h1>PONG</h1>
+  <div class="subtitle">THE ORIGINAL ARCADE DUEL</div>
+
+  <div class="scoreboard">
+    <div>
+      <div class="score" id="scoreL">0</div>
+      <div class="player-name">PLAYER 1</div>
+    </div>
+    <div style="color:#526078">FIRST TO 7</div>
+    <div>
+      <div class="score" id="scoreR">0</div>
+      <div class="player-name">PLAYER 2</div>
+    </div>
+  </div>
+
+  <canvas id="game" width="800" height="500"></canvas>
+
+  <div>
+    <button id="start">START GAME</button>
+    <button id="reset">RESTART</button>
+  </div>
+
+  <div class="controls">
+    PLAYER 1: W / S &nbsp; | &nbsp; PLAYER 2: ↑ / ↓<br>
+    First to 7 points wins. Press SPACE to pause.
+  </div>
+
+  <div class="mobile-controls">
+    <button id="leftUp">P1 ▲</button>
+    <button id="leftDown">P1 ▼</button>
+    <button id="rightUp">P2 ▲</button>
+    <button id="rightDown">P2 ▼</button>
+  </div>
+</main>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+const WIN_SCORE = 7;
+
+const paddleW = 12;
+const paddleH = 90;
+const paddleSpeed = 7;
+const ballRadius = 8;
+
+let left, right, ball;
+let scoreL = 0;
+let scoreR = 0;
+let running = false;
+let paused = false;
+let finished = false;
+let lastTime = 0;
+let serveDirection = 1;
+
+const keys = {};
+
+function makePaddle(x) {
+  return { x, y: H / 2 - paddleH / 2, score: 0 };
+}
+
+function resetBall(direction = 1) {
+  ball = {
+    x: W / 2,
+    y: H / 2,
+    vx: 5 * direction,
+    vy: (Math.random() * 4 - 2) || 1
+  };
+}
+
+function resetGame() {
+  left = makePaddle(30);
+  right = makePaddle(W - 30 - paddleW);
+  scoreL = 0;
+  scoreR = 0;
+  running = false;
+  paused = false;
+  finished = false;
+  serveDirection = 1;
+  resetBall(serveDirection);
+  updateScore();
+  document.getElementById("start").textContent = "START GAME";
+  draw();
+}
+
+function updateScore() {
+  document.getElementById("scoreL").textContent = scoreL;
+  document.getElementById("scoreR").textContent = scoreR;
+}
+
+function clampPaddle(p) {
+  p.y = Math.max(0, Math.min(H - paddleH, p.y));
+}
+
+function movePaddles(dt) {
+  const step = paddleSpeed * dt;
+
+  if (keys["w"]) left.y -= step;
+  if (keys["s"]) left.y += step;
+  if (keys["ArrowUp"]) right.y -= step;
+  if (keys["ArrowDown"]) right.y += step;
+
+  clampPaddle(left);
+  clampPaddle(right);
+}
+
+function pointFor(player) {
+  if (player === "left") scoreL++;
+  else scoreR++;
+
+  updateScore();
+
+  if (scoreL >= WIN_SCORE || scoreR >= WIN_SCORE) {
+    finished = true;
+    running = false;
+    return;
+  }
+
+  serveDirection = player === "left" ? 1 : -1;
+  resetBall(serveDirection);
+}
+
+function hitPaddle(p, direction) {
+  const ballCenterY = ball.y;
+  const paddleCenterY = p.y + paddleH / 2;
+
+  // Where the ball hits the paddle: -1 to +1.
+  const impact = (ballCenterY - paddleCenterY) / (paddleH / 2);
+
+  // Increase speed slightly and change the bounce angle.
+  const speed = Math.min(
+    Math.hypot(ball.vx, ball.vy) * 1.06,
+    13
+  );
+
+  const angle = impact * (Math.PI / 3);
+
+  ball.vx = direction * speed * Math.cos(angle);
+  ball.vy = speed * Math.sin(angle);
+
+  ball.x = direction > 0
+    ? p.x + paddleW + ballRadius
+    : p.x - ballRadius;
+}
+
+function update(dt) {
+  movePaddles(dt);
+
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  // Top and bottom wall collisions.
+  if (ball.y - ballRadius <= 0) {
+    ball.y = ballRadius;
+    ball.vy = Math.abs(ball.vy);
+  }
+
+  if (ball.y + ballRadius >= H) {
+    ball.y = H - ballRadius;
+    ball.vy = -Math.abs(ball.vy);
+  }
+
+  // Left paddle collision.
+  if (
+    ball.vx < 0 &&
+    ball.x - ballRadius <= left.x + paddleW &&
+    ball.x + ballRadius >= left.x &&
+    ball.y + ballRadius >= left.y &&
+    ball.y - ballRadius <= left.y + paddleH
+  ) {
+    hitPaddle(left, 1);
+  }
+
+  // Right paddle collision.
+  if (
+    ball.vx > 0 &&
+    ball.x + ballRadius >= right.x &&
+    ball.x - ballRadius <= right.x + paddleW &&
+    ball.y + ballRadius >= right.y &&
+    ball.y - ballRadius <= right.y + paddleH
+  ) {
+    hitPaddle(right, -1);
+  }
+
+  // Scoring.
+  if (ball.x < -ballRadius) pointFor("right");
+  if (ball.x > W + ballRadius) pointFor("left");
+}
+
+function roundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#0b111c";
+  ctx.fillRect(0, 0, W, H);
+
+  // Centre dashed line.
+  ctx.strokeStyle = "#28354a";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([10, 12]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 0);
+  ctx.lineTo(W / 2, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Subtle glow.
+  ctx.shadowColor = "#67f5d1";
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = "#67f5d1";
+
+  roundedRect(left.x, left.y, paddleW, paddleH, 5);
+  roundedRect(right.x, right.y, paddleW, paddleH, 5);
+
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+
+  // Status overlay.
+  if (!running) {
+    let message = "PRESS START";
+    let submessage = "W / S  •  ARROW KEYS";
+
+    if (paused) {
+      message = "PAUSED";
+      submessage = "PRESS SPACE TO RESUME";
+    } else if (finished) {
+      message = scoreL > scoreR
+        ? "PLAYER 1 WINS!"
+        : "PLAYER 2 WINS!";
+      submessage = "RESTART TO PLAY AGAIN";
+    }
+
+    ctx.fillStyle = "#f5f7ff";
+    ctx.textAlign = "center";
+    ctx.font = "bold 27px monospace";
+    ctx.fillText(message, W / 2, H / 2 - 5);
+
+    ctx.fillStyle = "#8490a8";
+    ctx.font = "13px monospace";
+    ctx.fillText(submessage, W / 2, H / 2 + 25);
+  }
+}
+
+function frame(time) {
+  const dt = lastTime
+    ? Math.min((time - lastTime) / (1000 / 60), 2)
+    : 1;
+
+  lastTime = time;
+
+  if (running && !paused) update(dt);
+  draw();
+
+  requestAnimationFrame(frame);
+}
+
+document.addEventListener("keydown", event => {
+  if (["ArrowUp", "ArrowDown", " "].includes(event.key)) {
+    event.preventDefault();
+  }
+
+  keys[event.key.toLowerCase()] = true;
+  keys[event.key] = true;
+
+  if (event.code === "Space" && !finished) {
+    if (running) {
+      paused = !paused;
+    } else if (!paused) {
+      running = true;
+    }
+  }
+});
+
+document.addEventListener("keyup", event => {
+  keys[event.key.toLowerCase()] = false;
+  keys[event.key] = false;
+});
+
+window.addEventListener("blur", () => {
+  for (const key in keys) keys[key] = false;
+  if (running) paused = true;
+});
+
+document.getElementById("start").addEventListener("click", () => {
+  if (finished) return;
+
+  running = true;
+  paused = false;
+  document.getElementById("start").textContent = "PLAYING";
+});
+
+document.getElementById("reset").addEventListener("click", resetGame);
+
+// Mobile and touch controls.
+function bindHold(id, key) {
+  const button = document.getElementById(id);
+
+  button.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    keys[key] = true;
+    button.setPointerCapture(event.pointerId);
+  });
+
+  function release() {
+    keys[key] = false;
+  }
+
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+}
+
+bindHold("leftUp", "w");
+bindHold("leftDown", "s");
+bindHold("rightUp", "ArrowUp");
+bindHold("rightDown", "ArrowDown");
+
+resetGame();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
