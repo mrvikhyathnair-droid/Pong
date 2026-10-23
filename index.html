@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Classic Pong</title>
 
 <style>
@@ -57,6 +57,15 @@ h1 {
   margin-top: 5px;
 }
 
+.status {
+  min-height: 24px;
+  margin: 12px 0;
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: #67f5d1;
+}
+
 canvas {
   display: block;
   width: 100%;
@@ -88,16 +97,22 @@ button {
 
 button:hover { background: #a0ffe7; }
 
+button:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
+}
+
 .mobile-controls {
   display: flex;
   justify-content: space-between;
-  gap: 25px;
+  gap: 12px;
   margin-top: 12px;
 }
 
 .mobile-controls button {
   flex: 1;
   margin: 0;
+  padding: 12px 5px;
   user-select: none;
   touch-action: none;
 }
@@ -118,11 +133,15 @@ button:hover { background: #a0ffe7; }
       <div class="score" id="scoreL">0</div>
       <div class="player-name">PLAYER 1</div>
     </div>
-    <div style="color:#526078">FIRST TO 7</div>
+    <div style="color:#526078">FIRST TO 5</div>
     <div>
       <div class="score" id="scoreR">0</div>
       <div class="player-name">PLAYER 2</div>
     </div>
+  </div>
+
+  <div class="status" id="status" aria-live="polite">
+    READY TO PLAY
   </div>
 
   <canvas id="game" width="800" height="500"></canvas>
@@ -133,8 +152,8 @@ button:hover { background: #a0ffe7; }
   </div>
 
   <div class="controls">
-    PLAYER 1: W / S &nbsp; | &nbsp; PLAYER 2: ↑ / ↓<br>
-    First to 7 points wins. Press SPACE to pause.
+    PLAYER 1: W / S | PLAYER 2: ↑ / ↓<br>
+    First to 5 points wins. Press SPACE to pause.
   </div>
 
   <div class="mobile-controls">
@@ -146,31 +165,42 @@ button:hover { background: #a0ffe7; }
 </main>
 
 <script>
+"use strict";
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
 const W = canvas.width;
 const H = canvas.height;
-const WIN_SCORE = 7;
+const WIN_SCORE = 5;
+const PADDLE_W = 12;
+const PADDLE_H = 90;
+const PADDLE_SPEED = 7;
+const BALL_RADIUS = 8;
 
-const paddleW = 12;
-const paddleH = 90;
-const paddleSpeed = 7;
-const ballRadius = 8;
+const startButton = document.getElementById("start");
+const statusElement = document.getElementById("status");
 
-let left, right, ball;
+let left;
+let right;
+let ball;
+
 let scoreL = 0;
 let scoreR = 0;
+
 let running = false;
 let paused = false;
 let finished = false;
 let lastTime = 0;
 let serveDirection = 1;
 
-const keys = {};
+const keys = new Set();
 
 function makePaddle(x) {
-  return { x, y: H / 2 - paddleH / 2, score: 0 };
+  return {
+    x,
+    y: H / 2 - PADDLE_H / 2
+  };
 }
 
 function resetBall(direction = 1) {
@@ -182,37 +212,130 @@ function resetBall(direction = 1) {
   };
 }
 
+// Custom rounded rectangle: no ctx.roundRect dependency.
+function roundedRect(x, y, width, height, radius) {
+  const r = Math.min(
+    radius,
+    width / 2,
+    height / 2
+  );
+
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(
+    x + width, y + height,
+    x + width - r, y + height
+  );
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(
+    x, y + height,
+    x, y + height - r
+  );
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function getMatchStatus() {
+  if (scoreL === 4 && scoreR === 4) {
+    return { text: "SUDDEN DEATH", color: "#ff5577" };
+  }
+
+  if (scoreL === 4 || scoreR === 4) {
+    return { text: "MATCH POINT", color: "#ffd166" };
+  }
+
+  return {
+    text: running
+      ? "MATCH IN PROGRESS"
+      : "READY TO PLAY",
+    color: "#67f5d1"
+  };
+}
+
+// Keep all UI feedback synchronized with the game state.
+function syncUI() {
+  document.getElementById("scoreL").textContent = scoreL;
+  document.getElementById("scoreR").textContent = scoreR;
+
+  if (finished) {
+    statusElement.textContent =
+      scoreL > scoreR ? "PLAYER 1 WINS!" : "PLAYER 2 WINS!";
+    statusElement.style.color = "#67f5d1";
+    startButton.textContent = "MATCH OVER";
+    return;
+  }
+
+  if (paused) {
+    statusElement.textContent = "PAUSED";
+    statusElement.style.color = "#ffd166";
+    startButton.textContent = "RESUME GAME";
+    return;
+  }
+
+  const status = getMatchStatus();
+  statusElement.textContent = status.text;
+  statusElement.style.color = status.color;
+
+  startButton.textContent = running ? "PAUSE GAME" : "START GAME";
+}
+
+function startGame() {
+  if (finished) return;
+
+  running = true;
+  paused = false;
+  syncUI();
+}
+
+function togglePause() {
+  if (finished) return;
+
+  if (!running) {
+    startGame();
+    return;
+  }
+
+  paused = !paused;
+  syncUI();
+}
+
 function resetGame() {
   left = makePaddle(30);
-  right = makePaddle(W - 30 - paddleW);
+  right = makePaddle(W - 30 - PADDLE_W);
+
   scoreL = 0;
   scoreR = 0;
+
   running = false;
   paused = false;
   finished = false;
   serveDirection = 1;
+
+  keys.clear();
   resetBall(serveDirection);
-  updateScore();
-  document.getElementById("start").textContent = "START GAME";
+  syncUI();
   draw();
 }
 
-function updateScore() {
-  document.getElementById("scoreL").textContent = scoreL;
-  document.getElementById("scoreR").textContent = scoreR;
-}
-
-function clampPaddle(p) {
-  p.y = Math.max(0, Math.min(H - paddleH, p.y));
+function clampPaddle(paddle) {
+  paddle.y = Math.max(
+    0,
+    Math.min(H - PADDLE_H, paddle.y)
+  );
 }
 
 function movePaddles(dt) {
-  const step = paddleSpeed * dt;
+  const step = PADDLE_SPEED * dt;
 
-  if (keys["w"]) left.y -= step;
-  if (keys["s"]) left.y += step;
-  if (keys["ArrowUp"]) right.y -= step;
-  if (keys["ArrowDown"]) right.y += step;
+  if (keys.has("w")) left.y -= step;
+  if (keys.has("s")) left.y += step;
+  if (keys.has("arrowup")) right.y -= step;
+  if (keys.has("arrowdown")) right.y += step;
 
   clampPaddle(left);
   clampPaddle(right);
@@ -222,26 +345,24 @@ function pointFor(player) {
   if (player === "left") scoreL++;
   else scoreR++;
 
-  updateScore();
-
   if (scoreL >= WIN_SCORE || scoreR >= WIN_SCORE) {
     finished = true;
     running = false;
+    paused = false;
+    syncUI();
     return;
   }
 
   serveDirection = player === "left" ? 1 : -1;
   resetBall(serveDirection);
+  syncUI();
 }
 
-function hitPaddle(p, direction) {
-  const ballCenterY = ball.y;
-  const paddleCenterY = p.y + paddleH / 2;
+function hitPaddle(paddle, direction) {
+  const impact = (
+    ball.y - (paddle.y + PADDLE_H / 2)
+  ) / (PADDLE_H / 2);
 
-  // Where the ball hits the paddle: -1 to +1.
-  const impact = (ballCenterY - paddleCenterY) / (paddleH / 2);
-
-  // Increase speed slightly and change the bounce angle.
   const speed = Math.min(
     Math.hypot(ball.vx, ball.vy) * 1.06,
     13
@@ -253,8 +374,8 @@ function hitPaddle(p, direction) {
   ball.vy = speed * Math.sin(angle);
 
   ball.x = direction > 0
-    ? p.x + paddleW + ballRadius
-    : p.x - ballRadius;
+    ? paddle.x + PADDLE_W + BALL_RADIUS
+    : paddle.x - BALL_RADIUS;
 }
 
 function update(dt) {
@@ -263,48 +384,41 @@ function update(dt) {
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  // Top and bottom wall collisions.
-  if (ball.y - ballRadius <= 0) {
-    ball.y = ballRadius;
+  if (ball.y - BALL_RADIUS <= 0) {
+    ball.y = BALL_RADIUS;
     ball.vy = Math.abs(ball.vy);
   }
 
-  if (ball.y + ballRadius >= H) {
-    ball.y = H - ballRadius;
+  if (ball.y + BALL_RADIUS >= H) {
+    ball.y = H - BALL_RADIUS;
     ball.vy = -Math.abs(ball.vy);
   }
 
-  // Left paddle collision.
   if (
     ball.vx < 0 &&
-    ball.x - ballRadius <= left.x + paddleW &&
-    ball.x + ballRadius >= left.x &&
-    ball.y + ballRadius >= left.y &&
-    ball.y - ballRadius <= left.y + paddleH
+    ball.x - BALL_RADIUS <= left.x + PADDLE_W &&
+    ball.x + BALL_RADIUS >= left.x &&
+    ball.y + BALL_RADIUS >= left.y &&
+    ball.y - BALL_RADIUS <= left.y + PADDLE_H
   ) {
     hitPaddle(left, 1);
   }
 
-  // Right paddle collision.
   if (
     ball.vx > 0 &&
-    ball.x + ballRadius >= right.x &&
-    ball.x - ballRadius <= right.x + paddleW &&
-    ball.y + ballRadius >= right.y &&
-    ball.y - ballRadius <= right.y + paddleH
+    ball.x + BALL_RADIUS >= right.x &&
+    ball.x - BALL_RADIUS <= right.x + PADDLE_W &&
+    ball.y + BALL_RADIUS >= right.y &&
+    ball.y - BALL_RADIUS <= right.y + PADDLE_H
   ) {
     hitPaddle(right, -1);
   }
 
-  // Scoring.
-  if (ball.x < -ballRadius) pointFor("right");
-  if (ball.x > W + ballRadius) pointFor("left");
-}
-
-function roundedRect(x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, r);
-  ctx.fill();
+  if (ball.x < -BALL_RADIUS) {
+    pointFor("right");
+  } else if (ball.x > W + BALL_RADIUS) {
+    pointFor("left");
+  }
 }
 
 function draw() {
@@ -312,7 +426,6 @@ function draw() {
   ctx.fillStyle = "#0b111c";
   ctx.fillRect(0, 0, W, H);
 
-  // Centre dashed line.
   ctx.strokeStyle = "#28354a";
   ctx.lineWidth = 3;
   ctx.setLineDash([10, 12]);
@@ -322,21 +435,18 @@ function draw() {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Subtle glow.
   ctx.shadowColor = "#67f5d1";
   ctx.shadowBlur = 15;
   ctx.fillStyle = "#67f5d1";
 
-  roundedRect(left.x, left.y, paddleW, paddleH, 5);
-  roundedRect(right.x, right.y, paddleW, paddleH, 5);
+  roundedRect(left.x, left.y, PADDLE_W, PADDLE_H, 5);
+  roundedRect(right.x, right.y, PADDLE_W, PADDLE_H, 5);
 
   ctx.beginPath();
-  ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+  ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
   ctx.fill();
-
   ctx.shadowBlur = 0;
 
-  // Status overlay.
   if (!running) {
     let message = "PRESS START";
     let submessage = "W / S  •  ARROW KEYS";
@@ -369,61 +479,65 @@ function frame(time) {
 
   lastTime = time;
 
-  if (running && !paused) update(dt);
-  draw();
+  if (running && !paused) {
+    update(dt);
+  }
 
+  draw();
   requestAnimationFrame(frame);
 }
 
 document.addEventListener("keydown", event => {
-  if (["ArrowUp", "ArrowDown", " "].includes(event.key)) {
+  const key = event.key.toLowerCase();
+
+  if (["arrowup", "arrowdown", " "].includes(key)) {
     event.preventDefault();
   }
 
-  keys[event.key.toLowerCase()] = true;
-  keys[event.key] = true;
+  keys.add(key);
 
-  if (event.code === "Space" && !finished) {
-    if (running) {
-      paused = !paused;
-    } else if (!paused) {
-      running = true;
-    }
+  if (key === " " && !event.repeat) {
+    togglePause();
   }
 });
 
 document.addEventListener("keyup", event => {
-  keys[event.key.toLowerCase()] = false;
-  keys[event.key] = false;
+  keys.delete(event.key.toLowerCase());
 });
 
 window.addEventListener("blur", () => {
-  for (const key in keys) keys[key] = false;
-  if (running) paused = true;
+  keys.clear();
+
+  if (running && !paused && !finished) {
+    paused = true;
+    syncUI();
+  }
 });
 
-document.getElementById("start").addEventListener("click", () => {
-  if (finished) return;
-
-  running = true;
-  paused = false;
-  document.getElementById("start").textContent = "PLAYING";
+startButton.addEventListener("click", () => {
+  if (paused) {
+    startGame();
+  } else if (!running) {
+    startGame();
+  } else {
+    togglePause();
+  }
 });
 
-document.getElementById("reset").addEventListener("click", resetGame);
+document.getElementById("reset")
+  .addEventListener("click", resetGame);
 
-// Mobile and touch controls.
 function bindHold(id, key) {
   const button = document.getElementById(id);
 
   button.addEventListener("pointerdown", event => {
     event.preventDefault();
-    keys[key] = true;
+    keys.add(key);
     button.setPointerCapture(event.pointerId);
   });
 
   function release() {
-    keys[key] = false;
+    keys.delete(key);
   }
 
   button.addEventListener("pointerup", release);
@@ -433,8 +547,8 @@ function bindHold(id, key) {
 
 bindHold("leftUp", "w");
 bindHold("leftDown", "s");
-bindHold("rightUp", "ArrowUp");
-bindHold("rightDown", "ArrowDown");
+bindHold("rightUp", "arrowup");
+bindHold("rightDown", "arrowdown");
 
 resetGame();
 requestAnimationFrame(frame);
